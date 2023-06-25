@@ -1,0 +1,426 @@
+---
+title: "Feem Data Analysis"
+author: "Sumit"
+date: "2023-06-23"
+output: html_document
+---
+
+# FEEM data Analysis
+Fluoroscence Excitation Emission Matrix. It is a two-dimensional data format that represents a sample's fluorescence properties at various excitation and emission wavelengths.
+
+
+##### FEEM data analysis requires many steps:
+1. Importing and correcting file names: This step involve importing the raw file and correcting its fataframe name corresponding to its value, because while exporting the file from Horiba aqualog to .opj file it randomly distributes its dataframe. 
+
+2. Check Data: In this step we check the structure of raw data, and weather the main dataframes are available or not which are S1/R1 , S1c/R1c file, Absorbance Blank, Absorbance Sample and Sample-Blank. Later we will know what fd contain which data. 
+
+3. Inner Filter Effect: The inner filter effect describes the attenuation of excitation and/or emission light caused by the presence of absorbing or scattering components in the sample. To get proper fluorescence intensities, we need to evaluate and compensate for this effect.
+
+4. Scattering removal : Removing of scattering band caused by 1st and 2nd order of Raman and Rayleigh Scattering. 
+**Raman scattering** is an inelastic scattering phenomena in which light interacts with molecules, resulting in a frequency shift of the scattered light. It offers information on molecular vibrational and rotational states, allowing for chemical identification and study.
+**Rayleigh scattering**, on the other hand, is an elastic scattering of light caused by particles or molecules far smaller than the wavelength of the incident light. It is responsible for the blue colour of the sky and does not involve a frequency shift.
+
+5. Normalization
+
+
+
+
+##### Importing libraries thet will be needed, if not installed then install it first. 
+
+```{r}
+library(eemR)
+library(Ropj)
+library("tidyverse")
+```
+
+
+Here data is the raw data file and S1 is the Sample 1 in the Raw data. 
+
+
+```{r}
+data <- read.opj('/Users/sumitkumargupta/Desktop/Dal /FEEM/Raw Data.opj')
+S1 <- data$BSC1041
+summary(S1)
+```
+
+
+
+```{r}
+Current_df_name <- c( "Note", "Abs Spectrum Blank " ,"S1 Blank",                   "S1 Dark and Mcorrect Blank",  
+"S1c Blank", "R1 and R1c Blank",  "S1c/R1c Blank", "Abs Spectrum Sample",            
+"S1 Sample",  "S1 Dark and Mcorrect Sample",  "S1c Sample", "R1 and R1c Sample", "S1c/R1c Sample",  "Sample - Blank", "Sample - Blank  XYZ",  "Abs Spectra Graphs",   "Waterfall Plot Blank",   "Waterfall Plot Sample",  "Sample - Blank Waterfall Plot", "Sample - Blank Contour Plot" )
+
+Correct_dataframe_name <- c( "S1 Blank",                   
+"S1c Blank",                       
+"-",
+"R1 and R1c Blank",                
+"Abs Spectrum Blank",  
+"S1 Dark and Mcorrect Sample",   
+"Sample - Blank",                 
+"-",
+"S1 Blank",                   
+"-",
+"S1 Dark and Mcorrect Sample",   
+"S1c Sample",                      
+"R1 and R1c Sample ",            
+"S1c/R1c Sample ",                 
+"Sample - Blank  XYZ",              
+"Abs Spectrum Sample ",           
+"-",
+"-",
+"S1c/R1c Blank",               
+"-"
+  )
+
+data.frame(Current_df_name, Correct_dataframe_name)
+
+```
+After importing the data and looking at dataframe and their values, observance was made that it contain data of different dataframes, so here is the correct name . First column contain the dataframe name showm, and second column is the name of dataframe , whose value it actually containing. From here we will refer the correct dataframe name. 
+
+
+
+# Blank Subtraction 
+Here we will subtract the corrected blank data from the corrected sample data. Now we will see what the corrected data means,
+1. `S1` and `S1 Blank` dataframe contains the raw values, and `S1 Dark and Mcorrect` dataframe containd S1 dark and Mcorrect. The formula to correct this is **S1c = (S1 - S1 Dark) * Mcorrect**, where S1c means S1 corrected, we will do same calculation for Blank file also and then subtract the blank from sample. 
+
+Here sample_blank is Sample - Blank
+```{r}
+
+sample_blank <- S1$`Sample - Blank`[ , -1] - S1$`Sample - Blank Waterfall Plot`[ , -1]
+
+```
+
+
+```{r}
+S1$`Sample - Blank` %>%  
+  data.frame() %>%  
+  setNames(1:189) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "Sample") +
+  scale_x_reverse()
+
+
+S1$`Sample - Blank Waterfall Plot` %>%  
+  data.frame() %>%  
+  setNames(1:189) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "Blank") +
+  scale_x_reverse()
+```
+
+
+
+
+```{r}
+identical(sample_blank, S1$`S1c/R1c Blank`[ , -1] )
+```
+
+
+As we verified that `S1c/R1c Blank` df after subtracting Corrected blank from correct Sample. 
+
+
+
+
+```{r}
+sample_blank %>%  
+  data.frame() %>%  
+  setNames(1:188) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "Sample - Blank") +
+  scale_x_reverse()
+```
+
+# Inner Filter Effect
+
+So for inner filter effect, the formula is **`Fideal = Fobs * 10^(Aex + Aem)0.5` **
+where Fideal is the ideal fluorescence-signal spectrum expected in the absence of IFE, Fobs is the observed fluorescence signal, and AbsEx and AbsEm are the measured absorbance values at the respective excitation and emission wavelength-coordinates. 
+We only have Aex in dataframe name `Abs Spectrum Sample`, to find the Absorbance value of Emission we have to interpolate, as we have absorbance value of Excitation. 
+
+Now we have many methods for interpolation, we will try some of here to find absorbance of emission. 
+
+#### Method 1
+
+```{r}
+library(stats)
+excitation_absorption <- S1$`Abs Spectra Graphs`$J[1:188]
+excitation_wavelength <- S1$`Abs Spectra Graphs`$A[1:188]
+
+# Perform spline interpolation
+
+spline_func <- splinefun(excitation_wavelength,excitation_absorption )
+
+#spline_func <- splinefun(excitation_wavelength, excitation_absorption)
+
+# Generate interpolated absorption values for the emission wavelengths
+emission_wavelengths <- S1[["Sample - Blank"]]$A  # Range of emission wavelengths
+interpolated_absorption <- spline_func(emission_wavelengths) # interpolated absorbance value
+```
+
+
+
+Creating df containing Exitation and Absorbance,  and Emission and Absorbance corresponding to Emission. 
+
+
+```{r}
+abs_data_ex <- data.frame(wavelength = excitation_wavelength, absorbance = excitation_absorption )
+abs_data_em <- data.frame(wavelength = emission_wavelengths, absorbance = interpolated_absorption )
+
+```
+
+
+
+Now we have interpolated absorbance value, we will create a matrix with `no. of excitation values` * `no. of emission values` , and corresponding value containd sum of Absorbance.  
+
+
+```{r}
+abs_sum_df <- data.frame(matrix(0, nrow = nrow(abs_data_em), ncol = nrow(abs_data_ex)))
+
+colnames(abs_sum_df) <- abs_data_ex[, 1]
+rownames(abs_sum_df) <- abs_data_em[, 1]
+
+for (i in 1:nrow(abs_data_em)) {
+  for (j in 1:nrow(abs_data_ex)) {
+    # Calculate the sum of absorbance values for the corresponding wavelengths
+    abs_sum_df[i, j] <- abs_data_em[i, 2] + abs_data_ex[j, 2]
+  }
+}
+
+```
+
+
+We are applying this formula **`Fideal = Fobs * 10^(Aex + Aem)0.5` **, `abs_sum_df` contains `Aex + Aem`. 
+
+
+```{r}
+
+abs_factor_df <- 10^(abs_sum_df/2)
+  
+```
+
+Now to get F ideal we will multiply F obs with correction factor, which is`10^(Aex + Aem)0.5`
+
+```{r}
+
+data_IFE <- sample_blank*abs_factor_df
+
+```
+
+**data_IFE** Contains Inner Filter Corrected data by Method 1. 
+
+
+
+#### Method 2 IFE 
+"fmm", "periodic", "natural", "monoH.FC", "hyman", this are the methods available in stats package for interpolation, best fit out of this is from `method = 'monoH.FC'`. 
+
+```{r}
+  sf <- stats::splinefun(excitation_wavelength, excitation_absorption, method = 'monoH.FC')
+
+  ex <- sf(abs_data_ex$wavelength)
+  em <- sf(abs_data_em$wavelength)
+
+  # Calculate total absorbance in 1 cm cuvette.
+  # This also assume that the fluorescence has been measured in 1 cm cuvette.
+  total_absorbance <- sapply(ex, function(x) {
+    x + em
+  }) 
+
+  max_abs <- max(total_absorbance)
+
+  if (max_abs > 1.5) {
+    cat("Total absorbance is > 1.5 (Atotal = ", max_abs, ")\n",
+      "A 2-fold dilution is recommended. See ?eem_inner_filter_effect.\n",
+      sep = ""
+    )
+  }
+
+  ife_correction_factor <- 10^(0.5 * total_absorbance)
+
+  cat(
+    "Range of IFE correction factors:",
+    round(range(ife_correction_factor), digits = 4), "\n"
+  )
+
+```
+
+
+
+```{r}
+corrected_ife <- sample_blank*ife_correction_factor
+```
+
+
+
+
+
+```{r}
+data_IFE %>%  
+  data.frame() %>%  
+  setNames(1:188) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "IFE_Processed_data") +
+  scale_x_reverse()
+
+corrected_ife %>%  
+  data.frame() %>%  
+  setNames(1:188) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "IFE_Processed_data") +
+  scale_x_reverse()
+```
+
+
+
+
+# Scattering Correction 
+
+```{r}
+ex <- seq(800, length.out = 189, by = -3)
+em <- S1$Note$A
+```
+
+
+
+```{r}
+
+raman_peak <- (-ex) / ((0.00036 * ex) - 1)
+
+```
+
+
+```{r}
+ind1 <- outer(em, 1 * ex - 10, "<=")
+ind2 <- outer(em, 1 * ex + 10, "<=")
+ind3 <- ifelse(ind1 + ind2 == 1, 0, 1)
+data_2 <- data_IFE
+first_order_corrected <- data_2 * ind3
+```
+
+
+
+```{r}
+first_order_corrected %>%  
+  data.frame() %>%  
+  setNames(1:188) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "first_order_corrected") +
+  scale_x_reverse()
+```
+
+
+
+
+```{r}
+in_1 <- outer(em, (2 * ex) - 10, "<=")
+in_2 <- outer(em, (2 * ex) + 10, "<=")
+in_3 <- ifelse(in_1 + in_2 == 1, 0, 1)
+second_order_corrected <- first_order_corrected * in_3
+```
+
+
+
+
+
+```{r}
+second_order_corrected %>%  
+  data.frame() %>%  
+  setNames(1:188) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "second_order_corrected") +
+  scale_x_reverse()
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+second_order_corrected %>%
+  data.frame() %>%
+  setNames(1:188) %>%
+  rowid_to_column() %>%
+  pivot_longer(-rowid, names_to = "col") %>%
+  filter(value >= -300) %>%
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +
+  scale_fill_viridis_c() +
+  geom_raster() +
+  labs(title = "second_order_corrected") +
+  scale_x_reverse()
+
+```
+
+
+
+# Raman Normalisation
+Raman normalisation is a technique for adjusting fluorescence readings to account for the effect of Raman scattering. Raman scattering is a process that occurs when incident light interacts with a material and scatters at different wavelengths, resulting in undesired background signals that might interfere with fluorescence measurements.
+
+
+
+```{r}
+new_df <- subset(data$blank1$S1c , data$blank1$S1c$B >= 371 & data$blank1$S1c$B <= 428 & data$blank1$S1c$A == 350)
+new_df
+```
+
+
+
+```{r}
+area <- sum((new_df$B[-1] - new_df$B[-length(new_df$B)]) * (new_df$C[-length(new_df)] + new_df$C[-1]) / 2)
+area
+```
+
+
+
+
+
+```{r}
+corrected_data <- second_order_corrected
+final_corrected <- corrected_data/area
+```
+
+```{r}
+final_corrected %>%  
+  data.frame() %>%  
+  setNames(1:188) %>%   
+  rowid_to_column() %>%   
+  pivot_longer(-rowid, names_to = "col") %>%  
+  filter(value >= -.1) %>%
+  ggplot(aes(as.numeric(col), rowid, fill = value)) +   
+  scale_fill_viridis_c() + 
+  geom_raster() +
+  labs(title = "Final Corrected File") +
+  scale_x_reverse()
+```
+
+
+
+
+
+
+
